@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# uv
+.venv/
+
+# Agent runtime state — findings, audit log, rollback snapshots, fix proposals
+.agent-memory/
+
+# Secrets
+.env
