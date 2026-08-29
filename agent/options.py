@@ -21,6 +21,7 @@ Two SDK subtleties shape the rest:
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from claude_agent_sdk import AgentDefinition, ClaudeAgentOptions, HookMatcher
 
@@ -96,6 +97,7 @@ def build_options(
     writable_namespaces: frozenset[str] | None = None,
     approval_gate: ApprovalGate | None = None,
     system_prompt: str | None = None,
+    mcp_server: Any = None,
 ) -> ClaudeAgentOptions:
     project_root = Path(project_root)
 
@@ -139,4 +141,5 @@ def build_options(
         # made inside the specialist subagent.
         hooks={"PreToolUse": [HookMatcher(hooks=[guardrail])]},
         agents={"kubernetes-specialist": specialist},
+        mcp_servers={"k8s": mcp_server} if mcp_server is not None else {},
     )
