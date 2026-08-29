@@ -19,7 +19,9 @@ situation where a confident wrong action does real damage, so containment comes 
   `kubectl config use-context prod` cannot redirect the agent.
 - **Fail-closed policy.** An unrecognised verb or flag is denied, not assumed safe.
 
-See `CLAUDE.md` for the full set of invariants.
+The invariants are enforced in `agent/policy.py` (classification) and
+`agent/kubectl.py` (the single process-spawning choke point), and pinned down by
+`tests/test_policy.py` and `tests/test_no_subprocess_bypass.py`.
 
 ## Quick start
 

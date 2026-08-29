@@ -39,10 +39,9 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "S"]
-# S603/S607 flag subprocess use. We allow them only in the one module that is
-# *supposed* to spawn processes; every other module is covered by
-# tests/test_no_subprocess_bypass.py.
-ignore = ["S603"]
+# No global subprocess exemption: agent/kubectl.py carries its own inline noqa,
+# and tests/test_no_subprocess_bypass.py enforces that it stays the only module
+# that spawns anything. A repo-wide ignore would disable the check everywhere.
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["S101", "S105", "S108"]  # asserts, fixture creds, and /tmp paths are the point

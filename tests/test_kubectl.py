@@ -17,7 +17,7 @@ import pytest
 
 from agent import kubectl
 from agent.kubectl import DeniedError, Result
-from agent.policy import PINNED_CONTEXT, Verdict
+from agent.policy import INTERNAL_APPLY_TOOL, PINNED_CONTEXT, Verdict
 
 READ = "mcp__k8s__kubectl_read"
 WRITE = "mcp__k8s__kubectl_write"
@@ -196,7 +196,7 @@ def test_missing_binary_is_reported_clearly(runner):
 def test_stdin_is_forwarded_for_apply(runner):
     kubectl.run(
         ["apply", "-f", "-", "-n", "chaos"],
-        tool_name=WRITE,
+        tool_name=INTERNAL_APPLY_TOOL,
         runner=runner,
         stdin="kind: Pod\n",
     )

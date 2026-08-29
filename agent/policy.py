@@ -55,6 +55,12 @@ KUBECTL_WRITE_TOOL = "mcp__k8s__kubectl_write"
 APPLY_MANIFEST_TOOL = "mcp__k8s__apply_manifest"
 DELETE_RESOURCE_TOOL = "mcp__k8s__delete_resource"
 
+# Execution paths used by the structured tools *after* they have validated their
+# input. These are never registered as MCP tools, so the model cannot name them;
+# they exist so `apply` and `delete` remain unreachable from free-form argv.
+INTERNAL_APPLY_TOOL = "internal__apply"
+INTERNAL_DELETE_TOOL = "internal__delete"
+
 # Built-ins that cannot touch the cluster or the filesystem destructively.
 HARMLESS_TOOLS = frozenset({"Read", "Glob", "Grep", "Skill", "Task", "TodoWrite"})
 
@@ -130,29 +136,40 @@ DENIED_CONNECTION_FLAGS = frozenset(
 )
 
 # Turn one mutation into an unbounded number of them.
-MASS_MUTATION_FLAGS = frozenset({"--all", "-A", "--all-namespaces", "-l", "--selector"})
+MASS_MUTATION_FLAGS = frozenset(
+    {"--all", "-A", "--all-namespaces", "-l", "--selector", "--field-selector"}
+)
 
 # Skip graceful teardown or orphan children.
 DANGEROUS_MUTATION_FLAGS = frozenset({"--force", "--grace-period", "--cascade", "--now", "--wait"})
 
-CLUSTER_SCOPED_KINDS = frozenset(
+# Kinds the agent may apply. An allowlist rather than a denylist of cluster-scoped
+# kinds, because cluster-scoped kinds arrive from CRDs and cannot be enumerated —
+# so the namespace fence provably could not contain whatever a denylist missed.
+# Secret is deliberately absent: applying one would put its value into a rollback
+# snapshot on disk.
+APPLICABLE_KINDS = frozenset(
     {
-        "namespace",
-        "clusterrole",
-        "clusterrolebinding",
-        "customresourcedefinition",
-        "persistentvolume",
-        "storageclass",
-        "node",
-        "apiservice",
-        "mutatingwebhookconfiguration",
-        "validatingwebhookconfiguration",
-        "priorityclass",
-        "ingressclass",
-        "runtimeclass",
-        "csidriver",
-        "csinode",
-        "volumeattachment",
+        "pod",
+        "deployment",
+        "replicaset",
+        "statefulset",
+        "daemonset",
+        "job",
+        "cronjob",
+        "service",
+        "endpoints",
+        "ingress",
+        "networkpolicy",
+        "configmap",
+        "persistentvolumeclaim",
+        "resourcequota",
+        "limitrange",
+        "horizontalpodautoscaler",
+        "poddisruptionbudget",
+        "serviceaccount",
+        "role",
+        "rolebinding",
     }
 )
 
@@ -176,11 +193,49 @@ def _flag_value(args: list[str], index: int) -> str | None:
     return None
 
 
-def _find_namespace(args: list[str]) -> str | None:
-    for i, token in enumerate(args):
-        if _flag_name(token) in ("-n", "--namespace"):
-            return _flag_value(args, i)
-    return None
+def _namespace_values(args: list[str]) -> list[str | None]:
+    """Every namespace this command names, in order.
+
+    Handles `-n x`, `-nx`, `--namespace x` and `--namespace=x`, and stops at the
+    `--` terminator. Returning all of them (rather than the first) is what lets
+    the caller notice a command that names two different namespaces.
+    """
+    values: list[str | None] = []
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg == "--":
+            break
+        name, sep, inline = arg.partition("=")
+        if name == "--namespace":
+            if sep:
+                values.append(inline)
+            elif i + 1 < len(args) and not args[i + 1].startswith("-"):
+                values.append(args[i + 1])
+                i += 1
+            else:
+                values.append(None)
+        elif arg.startswith("-n") and not arg.startswith("--"):
+            if len(arg) > 2:
+                values.append(arg[2:])  # attached form: -nchaos
+            elif i + 1 < len(args) and not args[i + 1].startswith("-"):
+                values.append(args[i + 1])
+                i += 1
+            else:
+                values.append(None)
+        i += 1
+    return values
+
+
+def _check_namespace_args(args: list[str], writable: frozenset[str]) -> Decision | None:
+    values = _namespace_values(args)
+    if len({v for v in values}) > 1:
+        return _deny(
+            f"Command names more than one namespace ({sorted(str(v) for v in set(values))}). "
+            f"kubectl resolves a repeated flag last-wins, so this is refused as ambiguous "
+            f"rather than guessed at."
+        )
+    return _check_namespace(values[0] if values else None, writable)
 
 
 def _check_namespace(ns: str | None, writable: frozenset[str]) -> Decision | None:
@@ -209,7 +264,20 @@ def _check_namespace(ns: str | None, writable: frozenset[str]) -> Decision | Non
 # --------------------------------------------------------------------------
 
 
-def _classify_argv(args: list[str], writable: frozenset[str]) -> Decision:
+def _check_deletable(kind: str) -> Decision | None:
+    """One place that decides, and explains, which kinds may be deleted."""
+    if kind.lower() not in DELETABLE_KINDS:
+        return _deny(
+            f"Deleting a resource of kind '{kind}' is never permitted. Only "
+            f"pods, deployments, replicasets and jobs may be deleted; anything else "
+            f"risks data loss or a cluster-wide effect."
+        )
+    return None
+
+
+def _classify_argv(
+    args: list[str], writable: frozenset[str], *, allow_apply_delete: bool
+) -> Decision:
     if not args:
         return _deny("No command given.")
     if not all(isinstance(a, str) for a in args):
@@ -220,8 +288,8 @@ def _classify_argv(args: list[str], writable: frozenset[str]) -> Decision:
         return _deny("The first element of args must be a kubectl verb, not a flag.")
 
     # Connection and impersonation flags are refused on reads too.
-    for i, token in enumerate(args):
-        name = _flag_name(token)
+    for i, arg in enumerate(args):
+        name = _flag_name(arg)
         if name in DENIED_CONNECTION_FLAGS:
             return _deny(
                 f"Flag '{name}' redirects or escalates the client connection. "
@@ -262,7 +330,20 @@ def _classify_argv(args: list[str], writable: frozenset[str]) -> Decision:
         return Decision(Verdict.READ, f"`{verb}` observes cluster state without changing it.")
 
     if verb == "delete":
+        if not allow_apply_delete:
+            return _deny(
+                "`delete` must go through the delete_resource tool, which requires a "
+                "rationale, a named target and a typed confirmation. Free-form argv "
+                "would make all of that optional."
+            )
         return _classify_delete(args, rest, writable)
+
+    if verb == "apply" and not allow_apply_delete:
+        return _deny(
+            "`apply` must go through the apply_manifest tool, which validates the "
+            "manifest kind, rejects an embedded metadata.namespace that would escape "
+            "the fence, and requires a rationale."
+        )
 
     if verb in WRITE_VERBS:
         return _check_mutation(
@@ -272,10 +353,31 @@ def _classify_argv(args: list[str], writable: frozenset[str]) -> Decision:
             verb,
         )
 
-    if verb in NODE_SCOPED_VERBS or verb in DESTRUCTIVE_VERBS:
-        level = Verdict.DESTRUCTIVE if verb in DESTRUCTIVE_VERBS else Verdict.WRITE
+    # These are separated rather than merged: the reason string is shown to the
+    # human in the approval prompt, so an eviction must not be described as a
+    # change to node scheduling.
+    if verb == "evict":
         return _check_mutation(
-            args, Decision(level, f"`{verb}` changes node scheduling state."), writable, verb
+            args,
+            Decision(Verdict.DESTRUCTIVE, "`evict` removes a running pod from its node."),
+            writable,
+            verb,
+        )
+
+    if verb == "drain":
+        return _check_mutation(
+            args,
+            Decision(Verdict.DESTRUCTIVE, "`drain` evicts every pod from the node."),
+            writable,
+            verb,
+        )
+
+    if verb in NODE_SCOPED_VERBS:
+        return _check_mutation(
+            args,
+            Decision(Verdict.WRITE, f"`{verb}` changes node scheduling state."),
+            writable,
+            verb,
         )
 
     return _deny(
@@ -297,12 +399,9 @@ def _classify_delete(args: list[str], rest: list[str], writable: frozenset[str])
 
     kind = kind.lower()
 
-    if kind not in DELETABLE_KINDS:
-        return _deny(
-            f"Deleting a resource of kind '{kind}' is never permitted — only pods, "
-            f"deployments, replicasets and jobs may be deleted. Anything else risks data "
-            f"loss or cluster-wide effect."
-        )
+    problem = _check_deletable(kind)
+    if problem is not None:
+        return problem
     if not name:
         return _deny("`delete` must name exactly one resource. Deleting by kind alone is refused.")
 
@@ -332,7 +431,7 @@ def _check_mutation(
             )
 
     if verb not in NODE_SCOPED_VERBS:
-        problem = _check_namespace(_find_namespace(args), writable)
+        problem = _check_namespace_args(args, writable)
         if problem is not None:
             return problem
 
@@ -379,10 +478,11 @@ def _classify_apply(tool_input: dict, writable: frozenset[str]) -> Decision:
         kind = doc.get("kind")
         if not isinstance(kind, str) or not kind.strip():
             return _deny("Each manifest document must declare a kind.")
-        if kind.lower() in CLUSTER_SCOPED_KINDS:
+        if kind.lower() not in APPLICABLE_KINDS:
             return _deny(
-                f"Kind '{kind}' is cluster-scoped and cannot be confined by the namespace "
-                f"fence, so applying it is refused."
+                f"Kind '{kind}' is not on the applicable allowlist. Cluster-scoped kinds "
+                f"arrive from CRDs and cannot be enumerated, so only kinds known to be "
+                f"namespaced and known to be needed may be applied."
             )
 
         metadata = doc.get("metadata") or {}
@@ -406,11 +506,11 @@ def _classify_delete_resource(tool_input: dict, writable: frozenset[str]) -> Dec
     namespace = tool_input.get("namespace")
     rationale = tool_input.get("rationale")
 
-    if not isinstance(kind, str) or kind.lower() not in DELETABLE_KINDS:
-        return _deny(
-            f"Deleting a resource of kind '{kind}' is never permitted — only pods, "
-            f"deployments, replicasets and jobs may be deleted."
-        )
+    if not isinstance(kind, str):
+        return _deny("A resource kind is required.")
+    problem = _check_deletable(kind)
+    if problem is not None:
+        return problem
     if not isinstance(name, str) or not name.strip():
         return _deny("A resource name is required.")
     if not isinstance(rationale, str) or not rationale.strip():
@@ -450,11 +550,20 @@ def classify(
     if tool_name in LOCAL_ONLY_TOOLS:
         return Decision(Verdict.READ, f"`{tool_name}` writes only to local session state.")
 
-    if tool_name in (KUBECTL_READ_TOOL, KUBECTL_WRITE_TOOL):
+    if tool_name in (
+        KUBECTL_READ_TOOL,
+        KUBECTL_WRITE_TOOL,
+        INTERNAL_APPLY_TOOL,
+        INTERNAL_DELETE_TOOL,
+    ):
         args = tool_input.get("args")
         if not isinstance(args, list):
             return _deny("args must be a list of strings.")
-        decision = _classify_argv(args, writable)
+        decision = _classify_argv(
+            args,
+            writable,
+            allow_apply_delete=tool_name in (INTERNAL_APPLY_TOOL, INTERNAL_DELETE_TOOL),
+        )
         # The read tool must never become a mutation path, whatever it was handed.
         if tool_name == KUBECTL_READ_TOOL and decision.verdict not in (Verdict.READ, Verdict.DENY):
             return _deny(
