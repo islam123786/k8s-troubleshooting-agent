@@ -1,0 +1,7 @@
+name: pending-resources
+title: CPU request exceeds any node's capacity
+keywords: [pending, insufficient, cpu, request, schedul]
+root_cause: >
+  The pod requests 500 CPU, which exceeds every node's allocatable capacity, so
+  the scheduler reports Insufficient cpu and the pod stays Pending.
+skill: k8s-pending-scheduling

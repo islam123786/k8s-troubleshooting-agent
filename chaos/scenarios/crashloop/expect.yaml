@@ -1,0 +1,7 @@
+name: crashloop
+title: Container exits 1 on startup
+keywords: [crashloop, exit, "1", command, config]
+root_cause: >
+  The container command exits immediately with status 1, so the Deployment
+  restarts it forever with growing backoff.
+skill: k8s-crashloop

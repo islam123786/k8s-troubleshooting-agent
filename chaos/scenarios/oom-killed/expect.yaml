@@ -1,0 +1,7 @@
+name: oom-killed
+title: Container exceeds its memory limit
+keywords: [oomkilled, memory, limit, "137"]
+root_cause: >
+  The container allocates about 250Mi against a 128Mi memory limit and is
+  OOMKilled with exit code 137.
+skill: k8s-oom-and-limits

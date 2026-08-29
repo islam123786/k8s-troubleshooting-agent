@@ -1,0 +1,13 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: badimage-app, namespace: chaos }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: badimage-app } }
+  template:
+    metadata: { labels: { app: badimage-app } }
+    spec:
+      containers:
+        - name: app
+          # This tag has never existed.
+          image: nginx:1.99-does-not-exist

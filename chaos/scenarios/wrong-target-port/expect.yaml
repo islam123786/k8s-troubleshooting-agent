@@ -1,0 +1,7 @@
+name: wrong-target-port
+title: Service targetPort does not match the container port
+keywords: [targetport, "8080", port, service, container]
+root_cause: >
+  The Service forwards to targetPort 8080 while the container listens on 80, so
+  connections are refused despite the endpoints being populated.
+skill: k8s-networking-dns

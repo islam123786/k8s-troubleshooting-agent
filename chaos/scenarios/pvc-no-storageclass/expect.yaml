@@ -1,0 +1,7 @@
+name: pvc-no-storageclass
+title: PVC names a StorageClass that does not exist
+keywords: [pvc, storageclass, "fast-ssd-gp3", pending, unbound]
+root_cause: >
+  The PersistentVolumeClaim requests StorageClass fast-ssd-gp3, which does not
+  exist on this cluster, so the claim never binds and the pod cannot start.
+skill: k8s-storage-pvc

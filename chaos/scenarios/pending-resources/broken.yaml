@@ -1,0 +1,16 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: greedy-app, namespace: chaos }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: greedy-app } }
+  template:
+    metadata: { labels: { app: greedy-app } }
+    spec:
+      containers:
+        - name: app
+          image: nginx:1.27-alpine
+          resources:
+            # A request is a reservation, not a measurement. No node has 500
+            # allocatable CPUs, so this never schedules however idle the cluster is.
+            requests: { cpu: "500", memory: "8Gi" }

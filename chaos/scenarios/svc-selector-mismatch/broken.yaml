@@ -1,0 +1,22 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: web, namespace: chaos }
+spec:
+  replicas: 2
+  selector: { matchLabels: { app: web } }
+  template:
+    metadata: { labels: { app: web } }        # <-- pods are labelled app=web
+    spec:
+      containers:
+        - name: app
+          image: nginx:1.27-alpine
+          ports: [{ containerPort: 80 }]
+---
+apiVersion: v1
+kind: Service
+metadata: { name: web-svc, namespace: chaos }
+spec:
+  # Selector says app=webserver. Nothing carries that label, so the Service has
+  # no endpoints and every connection to it fails while all pods look healthy.
+  selector: { app: webserver }
+  ports: [{ port: 80, targetPort: 80 }]

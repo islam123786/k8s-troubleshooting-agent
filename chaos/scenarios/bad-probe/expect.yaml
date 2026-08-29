@@ -1,0 +1,7 @@
+name: bad-probe
+title: Liveness probe points at a closed port
+keywords: [liveness, probe, port, "9999", refused, restart]
+root_cause: >
+  The liveness probe targets port 9999 while the container listens on 80, so the
+  probe fails and the kubelet restarts the container repeatedly.
+skill: k8s-probes

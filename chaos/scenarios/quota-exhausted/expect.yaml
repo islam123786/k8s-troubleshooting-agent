@@ -1,0 +1,7 @@
+name: quota-exhausted
+title: ResourceQuota rejects the ReplicaSet
+keywords: [quota, "exceeded quota", replicaset, memory, forbidden]
+root_cause: >
+  The namespace ResourceQuota allows 64Mi of memory requests but the Deployment
+  asks for 3 x 128Mi, so pod creation is rejected at the ReplicaSet.
+skill: k8s-pending-scheduling

@@ -1,0 +1,5 @@
+name: image-pull
+title: Image tag does not exist
+keywords: [imagepull, image, tag, "not found", pull]
+root_cause: The image tag nginx:1.99-does-not-exist cannot be pulled because it does not exist.
+skill: k8s-image-pull

@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: { name: data-claim, namespace: chaos }
+spec:
+  # kind provides "standard". This class is from another cloud and does not exist.
+  storageClassName: fast-ssd-gp3
+  accessModes: [ReadWriteOnce]
+  resources: { requests: { storage: 1Gi } }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: stateful-app, namespace: chaos }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: stateful-app } }
+  template:
+    metadata: { labels: { app: stateful-app } }
+    spec:
+      volumes:
+        - name: data
+          persistentVolumeClaim: { claimName: data-claim }
+      containers:
+        - name: app
+          image: nginx:1.27-alpine
+          volumeMounts: [{ name: data, mountPath: /data }]

@@ -1,0 +1,7 @@
+name: svc-selector-mismatch
+title: Service selector matches no pods
+keywords: [service, selector, endpoint, label, "app=webserver"]
+root_cause: >
+  The Service selector is app=webserver but the pods are labelled app=web, so the
+  Service has no endpoints even though every pod is healthy.
+skill: k8s-networking-dns

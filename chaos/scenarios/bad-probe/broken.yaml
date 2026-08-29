@@ -1,0 +1,21 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: badprobe-app, namespace: chaos }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: badprobe-app } }
+  template:
+    metadata: { labels: { app: badprobe-app } }
+    spec:
+      containers:
+        - name: app
+          image: nginx:1.27-alpine
+          ports: [{ containerPort: 80 }]
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              # nginx listens on 80, not 9999. Probe gets connection refused,
+              # kubelet kills the container, and it restarts forever.
+              port: 9999
+            initialDelaySeconds: 3
+            periodSeconds: 5

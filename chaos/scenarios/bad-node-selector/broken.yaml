@@ -1,0 +1,14 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: picky-app, namespace: chaos }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: picky-app } }
+  template:
+    metadata: { labels: { app: picky-app } }
+    spec:
+      # No node in a default kind cluster carries this label.
+      nodeSelector: { disktype: nvme }
+      containers:
+        - name: app
+          image: nginx:1.27-alpine

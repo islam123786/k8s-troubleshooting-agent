@@ -1,0 +1,7 @@
+name: bad-node-selector
+title: nodeSelector matches no node
+keywords: [pending, nodeselector, affinity, "didn't match", label]
+root_cause: >
+  The pod requires the label disktype=nvme, which no node carries, so the
+  scheduler rejects every node and the pod stays Pending.
+skill: k8s-pending-scheduling

@@ -1,0 +1,7 @@
+name: netpol-block
+title: Default-deny NetworkPolicy drops all ingress
+keywords: [networkpolicy, ingress, deny, block, policy]
+root_cause: >
+  A NetworkPolicy selects these pods with an empty ingress rule list, which
+  denies all incoming traffic with no error surfaced anywhere.
+skill: k8s-networking-dns
