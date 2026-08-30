@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -106,10 +107,18 @@ def capture(
     except OSError as exc:
         raise SnapshotError(f"Could not write a rollback snapshot to {path}: {exc}") from exc
 
+    # Quoted: this string is copy-pasted into a shell by a human, so a path or a
+    # name containing a space must not silently become two arguments.
     if existed:
-        undo = f"kubectl --context {PINNED_CONTEXT} apply -n {namespace} -f {path}"
+        undo = (
+            f"kubectl --context {PINNED_CONTEXT} apply "
+            f"-n {shlex.quote(namespace)} -f {shlex.quote(str(path))}"
+        )
     else:
-        undo = f"kubectl --context {PINNED_CONTEXT} delete {kind} {name} -n {namespace}"
+        undo = (
+            f"kubectl --context {PINNED_CONTEXT} delete "
+            f"{shlex.quote(kind)} {shlex.quote(name)} -n {shlex.quote(namespace)}"
+        )
 
     return Snapshot(
         path=path,

@@ -144,3 +144,39 @@ def test_write_failure_is_swallowed_not_raised(tmp_path):
     blocked.write_text("not a directory")
     log = AuditLog(blocked / "audit.jsonl")
     log.attempt(tool_name="T", tool_input={}, decision=Decision(Verdict.READ, "fine"))
+
+
+# --------------------------------------------------------------------------
+# Regression: outcomes were never written in production
+# --------------------------------------------------------------------------
+
+
+def test_an_attempt_can_be_found_again_by_its_tool_use_id(log):
+    """The hook writes the attempt and the approval gate learns the verdict later.
+    They only share the tool_use_id, so that has to be the join key — otherwise an
+    applied change and a refused one are byte-identical apart from a random id."""
+    event_id = log.attempt(
+        tool_name="mcp__k8s__delete_resource",
+        tool_input={"kind": "pod", "name": "web"},
+        decision=Decision(Verdict.DESTRUCTIVE, "deletes a pod"),
+        tool_use_id="toolu_abc",
+    )
+    assert log.event_id_for("toolu_abc") == event_id
+    assert log.event_id_for("toolu_missing") is None
+
+
+def test_an_outcome_can_be_recorded_against_a_tool_use_id(log):
+    log.attempt(
+        tool_name="mcp__k8s__delete_resource",
+        tool_input={},
+        decision=Decision(Verdict.DESTRUCTIVE, "deletes a pod"),
+        tool_use_id="toolu_abc",
+    )
+    log.outcome_for("toolu_abc", status="declined")
+    outcomes = [e for e in read_lines(log) if e["event"] == "outcome"]
+    assert [o["status"] for o in outcomes] == ["declined"]
+
+
+def test_recording_an_outcome_for_an_unknown_call_is_harmless(log):
+    log.outcome_for(None, status="declined")
+    log.outcome_for("never-seen", status="declined")

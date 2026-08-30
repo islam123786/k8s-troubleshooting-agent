@@ -558,3 +558,43 @@ def test_evict_reason_describes_eviction_not_node_scheduling():
     d = classify(K_WRITE, {"args": ["evict", "pod", "web", "-n", "chaos"]})
     assert d.verdict is Verdict.DESTRUCTIVE
     assert "node scheduling" not in d.reason.lower()
+
+
+# --------------------------------------------------------------------------
+# Output formats (review finding 2b)
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "fmt",
+    [
+        "jsonpath={.data.password}",
+        "jsonpath-as-json={.data}",
+        "go-template={{.data.password}}",
+        "go-template-file=/tmp/t.tpl",
+        "custom-columns=P:.data.password",
+        "custom-columns-file=/tmp/c.txt",
+    ],
+)
+def test_projecting_output_formats_are_denied(fmt):
+    """These return a bare projected value, which redaction cannot recognise as
+    Secret material — it has no surrounding document to identify it by. That makes
+    `get secret -o jsonpath={.data.password}` a one-call exfiltration through an
+    auto-approved read tool, and exactly what an injected log line would ask for."""
+    assert read("get", "secret", "db", "-n", "chaos", "-o", fmt) is Verdict.DENY
+    assert read("get", "secret", "db", "-n", "chaos", f"-o={fmt}") is Verdict.DENY
+
+
+def test_the_template_flag_is_denied():
+    assert read("get", "secret", "db", "-n", "chaos", "--template", "{{.data}}") is Verdict.DENY
+
+
+@pytest.mark.parametrize("fmt", ["yaml", "json", "wide", "name"])
+def test_whole_document_output_formats_are_allowed(fmt):
+    """These return a full document, which redact() can parse and scrub."""
+    assert read("get", "pods", "-n", "chaos", "-o", fmt) is Verdict.READ
+    assert read("get", "pods", "-n", "chaos", f"-o={fmt}") is Verdict.READ
+
+
+def test_an_unrecognised_output_format_is_denied():
+    assert read("get", "pods", "-n", "chaos", "-o", "some-future-format") is Verdict.DENY

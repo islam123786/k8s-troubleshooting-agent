@@ -14,7 +14,7 @@ from __future__ import annotations
 import pytest
 from claude_agent_sdk import PermissionResultAllow, PermissionResultDeny
 
-from agent.approval import ApprovalGate, MutationBudgetExhausted
+from agent.approval import ApprovalGate
 from agent.rollback import Snapshot
 
 WRITE_ARGS = {"args": ["scale", "deploy", "web", "--replicas=2", "-n", "chaos"], "rationale": "x"}
@@ -171,11 +171,13 @@ async def test_each_call_is_asked_about_separately(tmp_path):
 
 
 async def test_the_mutation_budget_ends_the_session(tmp_path):
+    """Deny with interrupt=True rather than raise — see MutationBudgetExhausted."""
     g = gate(tmp_path, ["y"] * 5, max_mutations=2)
     await decide(g, "mcp__k8s__kubectl_write", WRITE_ARGS)
     await decide(g, "mcp__k8s__kubectl_write", WRITE_ARGS)
-    with pytest.raises(MutationBudgetExhausted):
-        await decide(g, "mcp__k8s__kubectl_write", WRITE_ARGS)
+    result = await decide(g, "mcp__k8s__kubectl_write", WRITE_ARGS)
+    assert isinstance(result, PermissionResultDeny)
+    assert result.interrupt is True
 
 
 async def test_declines_do_not_consume_the_budget(tmp_path):
@@ -214,3 +216,117 @@ async def test_non_interactive_mode_declines_instead_of_blocking(tmp_path):
     result = await decide(g, "mcp__k8s__kubectl_write", WRITE_ARGS)
     assert isinstance(result, PermissionResultDeny)
     assert g.shown == []
+
+
+# --------------------------------------------------------------------------
+# Regression: the destructive confirmation asked for the wrong word
+# --------------------------------------------------------------------------
+
+ROLLOUT_UNDO = {"args": ["rollout", "undo", "deploy/web", "-n", "chaos"], "rationale": "revert"}
+
+
+async def test_destructive_confirmation_asks_for_the_resource_not_the_verb(tmp_path):
+    """It used to ask for 'undo'. An operator who knew the cluster and typed the
+    real resource name was refused; one who echoed the prompt was approved."""
+    g = gate(tmp_path, ["y", "web"])
+    result = await decide(g, "mcp__k8s__kubectl_write", ROLLOUT_UNDO)
+    assert isinstance(result, PermissionResultAllow)
+    assert "web" in g.shown[-1]
+    assert "undo" not in g.shown[-1].split("(")[-1]
+
+
+async def test_echoing_the_verb_no_longer_confirms(tmp_path):
+    g = gate(tmp_path, ["y", "undo"])
+    assert isinstance(
+        await decide(g, "mcp__k8s__kubectl_write", ROLLOUT_UNDO), PermissionResultDeny
+    )
+
+
+async def test_a_namespace_is_never_the_confirmation_word(tmp_path):
+    g = gate(tmp_path, ["y", "chaos"])
+    args = {"args": ["rollout", "undo", "-n", "chaos", "deploy/web"], "rationale": "revert"}
+    assert isinstance(await decide(g, "mcp__k8s__kubectl_write", args), PermissionResultDeny)
+
+
+async def test_an_unidentifiable_target_fails_closed(tmp_path):
+    """Previously an unparseable target gave expected=None, and an empty answer
+    matched it only by accident. Now it is refused on purpose."""
+    g = gate(tmp_path, ["y", ""])
+    args = {"args": ["rollout", "undo"], "rationale": "revert"}
+    assert isinstance(await decide(g, "mcp__k8s__kubectl_write", args), PermissionResultDeny)
+
+
+async def test_the_budget_stops_the_session_without_raising(tmp_path):
+    """The SDK wraps can_use_tool in a blanket except, so a raised exception became
+    an opaque protocol error and the session carried on. interrupt=True is the
+    supported way to stop the turn from here."""
+    g = gate(tmp_path, ["y"] * 5, max_mutations=1)
+    await decide(g, "mcp__k8s__kubectl_write", WRITE_ARGS)
+    result = await decide(g, "mcp__k8s__kubectl_write", WRITE_ARGS)
+    assert isinstance(result, PermissionResultDeny)
+    assert result.interrupt is True
+    assert g.budget_exhausted is True
+
+
+# --------------------------------------------------------------------------
+# Regression: the audit log recorded intent but never outcome
+# --------------------------------------------------------------------------
+
+
+async def test_the_gate_records_what_became_of_each_attempt(tmp_path):
+    """Previously an applied delete and a refused one were indistinguishable in the
+    log — which is the one question the audit log exists to answer."""
+    import json
+
+    from agent.audit import AuditLog
+    from agent.policy import Decision, Verdict
+
+    log = AuditLog(tmp_path / "audit.jsonl")
+    log.attempt(
+        tool_name="mcp__k8s__kubectl_write",
+        tool_input=WRITE_ARGS,
+        decision=Decision(Verdict.WRITE, "scales"),
+        tool_use_id="toolu_1",
+    )
+
+    class Ctx:
+        tool_use_id = "toolu_1"
+
+    g = gate(tmp_path, ["n"], audit_log=log)
+    await g("mcp__k8s__kubectl_write", WRITE_ARGS, Ctx())
+
+    rows = [json.loads(line) for line in log.path.read_text().splitlines() if line.strip()]
+    outcomes = [r for r in rows if r["event"] == "outcome"]
+    assert [o["status"] for o in outcomes] == ["declined"]
+
+
+async def test_an_applied_change_records_its_rollback_path(tmp_path):
+    import json
+
+    from agent.audit import AuditLog
+    from agent.policy import Decision, Verdict
+
+    log = AuditLog(tmp_path / "audit.jsonl")
+    log.attempt(
+        tool_name="mcp__k8s__kubectl_write",
+        tool_input=WRITE_ARGS,
+        decision=Decision(Verdict.WRITE, "scales"),
+        tool_use_id="toolu_2",
+    )
+
+    class Ctx:
+        tool_use_id = "toolu_2"
+
+    g = gate(tmp_path, ["y"], audit_log=log)
+    await g("mcp__k8s__kubectl_write", WRITE_ARGS, Ctx())
+
+    rows = [json.loads(line) for line in log.path.read_text().splitlines() if line.strip()]
+    (outcome,) = [r for r in rows if r["event"] == "outcome"]
+    assert outcome["status"] == "applied"
+    assert outcome["rollback_path"] and "snap.yaml" in outcome["rollback_path"]
+
+
+async def test_the_gate_works_without_an_audit_log(tmp_path):
+    """Auditing is instrumentation; losing it must not change any verdict."""
+    g = gate(tmp_path, ["y"])
+    assert isinstance(await decide(g, "mcp__k8s__kubectl_write", WRITE_ARGS), PermissionResultAllow)

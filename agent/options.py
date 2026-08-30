@@ -28,6 +28,7 @@ from claude_agent_sdk import AgentDefinition, ClaudeAgentOptions, HookMatcher
 from agent.approval import ApprovalGate
 from agent.audit import AuditLog
 from agent.hooks import make_guardrail_hook
+from agent.preflight import make_dry_run, make_snapshotter
 
 MODEL = "claude-opus-5"
 
@@ -103,11 +104,17 @@ def build_options(
 
     guardrail = make_guardrail_hook(audit_log=audit_log, writable_namespaces=writable_namespaces)
 
-    # Writes never exist without a gate. Leaving can_use_tool unset here would put
-    # the session in "default" mode with nothing to answer the prompt, which is a
-    # far more dangerous state than simply refusing to enable writes.
+    # Writes never exist without a gate. Leaving can_use_tool unset would put the
+    # session in "default" mode with nothing able to answer the prompt; an earlier
+    # version fixed that by fabricating a bare ApprovalGate, which was worse still
+    # — it prompted, then applied without a dry run or a snapshot. The fallback is
+    # now wired to the same preflight steps the CLI uses.
     if allow_writes and approval_gate is None:
-        approval_gate = ApprovalGate(writable_namespaces=writable_namespaces)
+        approval_gate = ApprovalGate(
+            dry_run=make_dry_run(writable_namespaces=writable_namespaces),
+            snapshot=make_snapshotter(writable_namespaces=writable_namespaces),
+            writable_namespaces=writable_namespaces,
+        )
 
     specialist = AgentDefinition(
         description=(

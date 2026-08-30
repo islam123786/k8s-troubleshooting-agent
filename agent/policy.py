@@ -140,6 +140,16 @@ MASS_MUTATION_FLAGS = frozenset(
     {"--all", "-A", "--all-namespaces", "-l", "--selector", "--field-selector"}
 )
 
+# Output formats that return a whole document, which redact() can parse and scrub.
+# An allowlist, because the danger is the opposite of a recognisable shape: a
+# projecting format (`-o jsonpath={.data.password}`) returns a bare value with no
+# surrounding document, so redaction has nothing to identify it by and a Secret
+# walks out through the auto-approved read tool.
+ALLOWED_OUTPUT_FORMATS = frozenset({"yaml", "json", "wide", "name", ""})
+
+# Renders arbitrary projections; same problem as the formats above.
+DENIED_TEMPLATE_FLAGS = frozenset({"--template", "--template-file"})
+
 # Skip graceful teardown or orphan children.
 DANGEROUS_MUTATION_FLAGS = frozenset({"--force", "--grace-period", "--cascade", "--now", "--wait"})
 
@@ -227,6 +237,27 @@ def _namespace_values(args: list[str]) -> list[str | None]:
     return values
 
 
+def _check_output_format(args: list[str]) -> Decision | None:
+    """Refuse output formats that project a bare value out of a document."""
+    for i, arg in enumerate(args):
+        name = _flag_name(arg)
+        if name in DENIED_TEMPLATE_FLAGS:
+            return _deny(
+                f"Flag '{name}' renders an arbitrary projection, which redaction cannot "
+                f"recognise as Secret material. Use -o yaml or -o json."
+            )
+        if name not in ("-o", "--output"):
+            continue
+        value = (_flag_value(args, i) or "").split("=", 1)[0]
+        if value not in ALLOWED_OUTPUT_FORMATS:
+            return _deny(
+                f"Output format '{value}' returns a bare projected value rather than a "
+                f"document, so secret redaction cannot see what it is. Permitted: "
+                f"{sorted(f for f in ALLOWED_OUTPUT_FORMATS if f)}."
+            )
+    return None
+
+
 def _check_namespace_args(args: list[str], writable: frozenset[str]) -> Decision | None:
     values = _namespace_values(args)
     if len({v for v in values}) > 1:
@@ -301,6 +332,10 @@ def _classify_argv(
                 return _deny(
                     f"Refusing context '{value}'. This agent may only talk to '{PINNED_CONTEXT}'."
                 )
+
+    problem = _check_output_format(args)
+    if problem is not None:
+        return problem
 
     verb = args[0]
     rest = args[1:]

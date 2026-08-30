@@ -136,3 +136,50 @@ def test_the_specialist_subagent_is_read_only(opts):
 
 def test_cwd_is_the_project_root(opts, tmp_path):
     assert str(opts.cwd) == str(tmp_path)
+
+
+# --------------------------------------------------------------------------
+# Regressions from the step 3-7 review
+# --------------------------------------------------------------------------
+
+
+def test_the_fallback_gate_is_fully_wired(write_opts):
+    """build_options used to construct ApprovalGate() with dry_run=None and
+    snapshot=None, so a single 'y' applied an unvalidated, unsnapshotted mutation
+    — invariant 10 broken by the fallback added to make writes safe."""
+    gate = write_opts.can_use_tool
+    assert gate is not None
+    assert gate.dry_run is not None, "a gate with no dry run is not a gate"
+    assert gate.snapshot is not None, "a gate with no snapshot has no undo path"
+
+
+def test_a_gate_cannot_be_built_without_a_dry_run_and_snapshot():
+    """Make the invariant a construction error rather than a code path nobody walks."""
+    from agent.approval import ApprovalGate
+
+    with pytest.raises(TypeError):
+        ApprovalGate()
+
+
+# --------------------------------------------------------------------------
+# The project's own settings must not disarm the developer
+# --------------------------------------------------------------------------
+
+
+def test_project_settings_do_not_deny_the_tools_a_developer_needs():
+    """A .claude/settings.json deny list is read by Claude Code as well as by the
+    agent's SDK sessions, so denying Bash/Write/Edit there disarms anyone working
+    on this repo. It also buys nothing: options.py sets disallowed_tools
+    explicitly on every session it builds, and the test above enforces that."""
+    import json
+    from pathlib import Path
+
+    settings = Path(__file__).resolve().parent.parent / ".claude" / "settings.json"
+    if not settings.is_file():
+        return
+    denied = json.loads(settings.read_text()).get("permissions", {}).get("deny", [])
+    for tool in ("Bash", "Write", "Edit", "Read", "Glob", "Grep"):
+        assert tool not in denied, (
+            f".claude/settings.json denies {tool}, which also disarms Claude Code in "
+            f"this repo. Set disallowed_tools in agent/options.py instead."
+        )

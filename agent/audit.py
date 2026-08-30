@@ -63,6 +63,9 @@ def _sanitise(value: object) -> object:
 class AuditLog:
     def __init__(self, path: str | os.PathLike[str] = DEFAULT_AUDIT_PATH):
         self.path = Path(path)
+        # The hook records the attempt; the approval gate learns the verdict several
+        # layers later. All they share is the tool_use_id, so that is the join key.
+        self._by_tool_use: dict[str, str] = {}
 
     def _write(self, entry: dict) -> None:
         try:
@@ -85,6 +88,8 @@ class AuditLog:
     ) -> str:
         """Record an attempt before it executes. Returns the id to pass to `outcome`."""
         event_id = uuid.uuid4().hex
+        if tool_use_id:
+            self._by_tool_use[tool_use_id] = event_id
         self._write(
             {
                 "event": "attempt",
@@ -99,6 +104,20 @@ class AuditLog:
             }
         )
         return event_id
+
+    def event_id_for(self, tool_use_id: str | None) -> str | None:
+        """The attempt id previously recorded for this tool call, if any."""
+        return self._by_tool_use.get(tool_use_id) if tool_use_id else None
+
+    def outcome_for(self, tool_use_id: str | None, **kwargs) -> None:
+        """Record an outcome against whichever attempt this tool call produced.
+
+        Silently does nothing for a call we never saw an attempt for — a missing
+        outcome row is a gap in the record, not a reason to interrupt the session.
+        """
+        event_id = self.event_id_for(tool_use_id)
+        if event_id:
+            self.outcome(event_id, **kwargs)
 
     def outcome(
         self,

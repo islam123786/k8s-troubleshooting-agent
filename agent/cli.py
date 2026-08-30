@@ -22,7 +22,7 @@ from claude_agent_sdk import (
     TextBlock,
 )
 
-from agent.approval import ApprovalGate, MutationBudgetExhausted
+from agent.approval import ApprovalGate
 from agent.audit import AuditLog
 from agent.mcp_server import build_server
 from agent.memory import Journal
@@ -138,6 +138,7 @@ async def run(args) -> int:
             writable_namespaces=writable,
             max_mutations=args.max_mutations,
             interactive=sys.stdin.isatty(),
+            audit_log=audit_log,
         )
 
     server = build_server(
@@ -194,12 +195,18 @@ async def run(args) -> int:
                     _print_response(message)
                     if isinstance(message, ResultMessage):
                         print()
-            except MutationBudgetExhausted as stop:
-                print(f"\n{stop}\nEnding the session.")
-                return 2
             except KeyboardInterrupt:
                 print("\nInterrupted. Nothing further was applied.")
                 await client.interrupt()
+
+            # The gate cannot raise to stop us — the SDK swallows exceptions from
+            # can_use_tool — so it sets a flag and we check it here.
+            if gate is not None and gate.budget_exhausted:
+                print(
+                    f"\nMutation budget of {args.max_mutations} reached. Ending the session "
+                    f"rather than asking again."
+                )
+                return 2
 
     print(f"Findings: {journal.findings_path}")
     print(f"Audit log: {audit_log.path}")

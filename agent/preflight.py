@@ -20,38 +20,40 @@ from agent.policy import (
     INTERNAL_APPLY_TOOL,
     INTERNAL_DELETE_TOOL,
     KUBECTL_WRITE_TOOL,
+    _namespace_values,
 )
+from agent.targets import target_from_args, target_from_manifest
 
 DRY_RUN_FLAG = "--dry-run=server"
 
 
+def _namespace(tool_input: dict) -> str:
+    """The namespace a mutation targets.
+
+    Delegates the argv parsing to `policy._namespace_values` so preflight and the
+    classifier can never disagree about which namespace a command names — the
+    class of bug where one is fixed and the other is not.
+    """
+    declared = tool_input.get("namespace")
+    if isinstance(declared, str) and declared:
+        return declared
+    values = [v for v in _namespace_values([str(a) for a in (tool_input.get("args") or [])]) if v]
+    return values[-1] if values else ""
+
+
 def _target(tool_input: dict) -> tuple[str, str, str] | None:
     """(kind, name, namespace) for the resource a mutation touches, if identifiable."""
+    namespace = _namespace(tool_input)
+
     if tool_input.get("kind") and tool_input.get("name"):
-        return (
-            str(tool_input["kind"]),
-            str(tool_input["name"]),
-            str(tool_input.get("namespace") or ""),
-        )
+        return str(tool_input["kind"]), str(tool_input["name"]), namespace
 
-    args = [str(a) for a in (tool_input.get("args") or [])]
-    namespace = ""
-    for i, arg in enumerate(args):
-        if arg in ("-n", "--namespace") and i + 1 < len(args):
-            namespace = args[i + 1]
-        elif arg.startswith("--namespace="):
-            namespace = arg.split("=", 1)[1]
+    if tool_input.get("manifest"):
+        found = target_from_manifest(str(tool_input["manifest"]))
+        return (found[0], found[1], namespace) if found else None
 
-    positional = [a for a in args[1:] if not a.startswith("-")]
-    if len(positional) >= 2:
-        kind, name = positional[0], positional[1]
-        if "/" in kind:
-            kind, name = kind.split("/", 1)
-        return kind, name, namespace
-    if len(positional) == 1 and "/" in positional[0]:
-        kind, name = positional[0].split("/", 1)
-        return kind, name, namespace
-    return None
+    found = target_from_args([str(a) for a in (tool_input.get("args") or [])])
+    return (found[0], found[1], namespace) if found else None
 
 
 def make_dry_run(*, writable_namespaces: frozenset[str] | None = None):
@@ -106,6 +108,12 @@ def make_snapshotter(
                 "snapshot could be taken."
             )
         kind, name, namespace = target
+        if not namespace:
+            raise RuntimeError(
+                f"Could not determine the namespace for {kind}/{name}. kubectl would "
+                f"resolve an empty namespace to the context default and snapshot a "
+                f"different object, so the change is abandoned instead."
+            )
         return rollback.capture(
             kind, name, namespace, root=root, writable_namespaces=writable_namespaces
         )

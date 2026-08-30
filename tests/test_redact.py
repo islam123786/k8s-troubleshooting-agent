@@ -141,3 +141,81 @@ def test_non_base64_data_value_still_redacted():
     """Malformed base64 is still a value we must not print."""
     out = redact("kind: Secret\ndata:\n  k: not!valid!base64\n")
     assert "not!valid!base64" not in out
+
+
+# --------------------------------------------------------------------------
+# Regressions from the step 3-7 review
+# --------------------------------------------------------------------------
+
+# kubectl writes this annotation on every `apply`, containing the FULL original
+# manifest as a JSON string — Secret data included. The redactor walks parsed
+# structures, and a string value is a leaf, so the payload sailed straight past
+# a `data:` mapping that had been correctly redacted right above it.
+APPLIED_ANNOTATION = """\
+apiVersion: v1
+kind: Secret
+metadata:
+  name: db-credentials
+  namespace: chaos
+  annotations:
+    kubectl.kubernetes.io/last-applied-configuration: |
+      {"apiVersion":"v1","kind":"Secret","metadata":{"name":"db-credentials","namespace":"chaos"},"data":{"password":"aHVudGVyMg==","username":"YWRtaW4="}}
+type: Opaque
+data:
+  password: aHVudGVyMg==
+  username: YWRtaW4=
+"""
+
+
+def test_last_applied_configuration_annotation_does_not_leak():
+    out = redact(APPLIED_ANNOTATION)
+    assert "aHVudGVyMg==" not in out, "Secret value leaked via last-applied-configuration"
+    assert "YWRtaW4=" not in out
+
+
+def test_the_secret_is_still_recognisable_after_the_annotation_is_handled():
+    out = redact(APPLIED_ANNOTATION)
+    assert "db-credentials" in out
+    assert "password" in out
+
+
+def test_a_secret_nested_in_any_annotation_string_does_not_leak():
+    doc = (
+        "kind: Secret\n"
+        "metadata:\n"
+        "  annotations:\n"
+        '    backup/previous: \'{"kind":"Secret","data":{"k":"aHVudGVyMg=="}}\'\n'
+        "data:\n"
+        "  k: aHVudGVyMg==\n"
+    )
+    assert "aHVudGVyMg==" not in redact(doc)
+
+
+def test_configmap_annotations_are_left_alone():
+    """Redacting these would hide the diff between desired and live config."""
+    doc = (
+        "kind: ConfigMap\n"
+        "metadata:\n"
+        "  annotations:\n"
+        '    kubectl.kubernetes.io/last-applied-configuration: \'{"data":{"LOG_LEVEL":"debug"}}\'\n'
+        "data:\n"
+        "  LOG_LEVEL: debug\n"
+    )
+    out = redact(doc)
+    assert "debug" in out
+    assert "LOG_LEVEL" in out
+
+
+def test_a_secret_value_in_an_unparseable_field_is_still_scrubbed():
+    """Backstop: structural redaction cannot reach everywhere kubectl might echo a
+    value — managedFields, a truncated annotation, a log line quoting itself. Any
+    string we know to be secret material is removed wherever it appears."""
+    doc = (
+        "kind: Secret\n"
+        "metadata:\n"
+        "  annotations:\n"
+        "    note: 'rotated from aHVudGVyMg== last week'\n"
+        "data:\n"
+        "  password: aHVudGVyMg==\n"
+    )
+    assert "aHVudGVyMg==" not in redact(doc)
