@@ -24,6 +24,7 @@ from claude_agent_sdk import (
 
 from agent.approval import ApprovalGate
 from agent.audit import AuditLog
+from agent.env import load_project_env
 from agent.mcp_server import build_server
 from agent.memory import Journal
 from agent.options import build_options
@@ -124,6 +125,9 @@ def _print_response(message) -> None:
 
 async def run(args) -> int:
     project_root = Path(args.project_root).resolve()
+    # The SDK reads ANTHROPIC_API_KEY from the environment; .env is gitignored and
+    # is where the key belongs, but nothing reads it unless we do.
+    load_project_env(project_root)
     writable = frozenset(args.writable_ns) if args.writable_ns else DEFAULT_WRITABLE_NAMESPACES
 
     memory_root = project_root / ".agent-memory"

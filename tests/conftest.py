@@ -7,8 +7,16 @@ Nothing in the unit suite may spawn a real process or touch a real cluster, so
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import pytest
+
+from agent.env import load_project_env
+
+# Integration tests skip themselves when ANTHROPIC_API_KEY is unset, so the .env
+# has to be loaded before collection decides — otherwise they silently skip while
+# a perfectly good key sits in the file.
+load_project_env(Path(__file__).resolve().parent.parent)
 
 
 @dataclass
