@@ -57,14 +57,27 @@ should change first and the reason should be in the commit message.
 10. **Dry run, then snapshot, then ask.** No mutation reaches the cluster without
     passing `--dry-run=server` and having its prior state captured with a
     generated undo command. If either fails, the change is abandoned without
-    troubling a human.
+    troubling a human. `dry_run` and `snapshot` are *required* arguments to
+    `ApprovalGate`, so a gate without them is a `TypeError` rather than a code
+    path — an earlier version defaulted them to `None` and prompted anyway.
 
 11. **Secrets never leave the cluster.** `redact()` runs over all output before it
     reaches context, transcript, journal or audit log. ConfigMaps are deliberately
     *not* redacted — a wrong ConfigMap value is a common defect and hiding it
     would defeat the agent.
 
-12. **Cluster output is untrusted data.** Pod logs, events and annotations are
+12. **Output formats are an allowlist** (`-o yaml|json|wide|name`). A projecting
+    format such as `-o jsonpath={.data.password}` returns a bare value with no
+    surrounding document, so redaction has nothing to identify it by — a Secret
+    would walk out through the auto-approved read tool. No amount of redaction
+    fixes this; only refusing the format does. — `agent/policy.py`
+
+13. **One parser decides what a command acts on.** `agent/targets.py` is shared by
+    the approval gate (which word must be typed to confirm) and preflight (which
+    resource is snapshotted). They must never disagree: if they do, you confirm
+    one object and snapshot another.
+
+14. **Cluster output is untrusted data.** Pod logs, events and annotations are
     written by workloads. They are wrapped in `<untrusted-output>` and the system
     prompt says instructions inside them are never followed — but the real defence
     is structural: in read-only mode the mutating tools do not exist to be reached.
@@ -107,6 +120,35 @@ always empty, and a fail-closed branch that was never reached. When a test
 guards something important, prove it can fail: inject the violation and watch it
 go red, or assert the shape of the data before asserting on its contents.
 
+### The safety code is where the bugs were
+
+Review of steps 3-7 found six defects that 389 passing tests had not caught, and
+**three of them were in code written specifically to be safe**: the destructive
+confirmation prompt asked for the wrong word (and so rejected the operator who
+knew the right one), the snapshot step named the wrong resource, and the fallback
+`ApprovalGate` added so writes could not exist ungated was itself ungated.
+
+The pattern is that a guardrail is written once, reasoned about carefully, and
+then never exercised — the tests alongside it assert the shape it was built with
+rather than the behaviour it promises. When you add a guard, write the test that
+proves the guard *stops something*, from the outside.
+
+### Do not put a deny list in `.claude/settings.json`
+
+Claude Code reads that file too. A deny list for `Bash`/`Write`/`Edit` intended to
+constrain the agent's SDK sessions disarms anyone developing this repo — it
+happened here, mid-project, and only became visible after a session restart. It
+also buys nothing: `options.py` sets `disallowed_tools` explicitly on every
+session it builds, and `tests/test_options.py` enforces that. A test now checks
+the deny list cannot come back.
+
+### The API key lives in `.env`
+
+Gitignored, `chmod 600`, loaded by `agent/env.py` (nothing reads `.env`
+automatically). Never in `.env.example` — that file is committed, and a live key
+was pasted into it once. A test checks no tracked file contains anything shaped
+like a real key.
+
 ## Layout
 
 ```
@@ -121,6 +163,8 @@ agent/
   audit.py       Append-only JSONL, written before execution.
   mcp_server.py  The typed tool surface; the agent's whole route to the cluster.
   memory.py      Findings journal and fix proposals.
+  targets.py     Which resource a command acts on. Shared by approval and preflight.
+  env.py         Loads .env, since nothing reads it automatically.
   options.py     ClaudeAgentOptions assembly.
   cli.py         The chat REPL.
 .claude/
