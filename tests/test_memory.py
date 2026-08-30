@@ -68,3 +68,51 @@ def test_a_hostile_diagnosis_cannot_escape_the_proposals_directory(journal):
 
 def test_reading_findings_before_any_exist_is_safe(journal):
     assert "No findings" in journal.read_findings()
+
+
+# --------------------------------------------------------------------------
+# Regression: the schema did not match the shape of a real diagnosis
+# --------------------------------------------------------------------------
+
+
+def test_a_finding_records_the_fields_a_diagnosis_actually_has(journal):
+    """The first live run sent title/resource/namespace/root_cause. The schema
+    declared summary/root_cause/fix, so the summary arrived empty and the
+    out-of-schema fields leaked into the journal as raw markup."""
+    journal.record_finding(
+        title="crashloop-app: container command is hardcoded to exit 1",
+        resource="deployment/crashloop-app",
+        namespace="chaos",
+        root_cause="command is [sh -c echo ...; exit 1]",
+        evidence="Last State: Terminated, Exit Code: 1",
+        fix="correct spec.template.spec.containers[0].command",
+    )
+    text = journal.findings_path.read_text()
+    assert "crashloop-app" in text
+    assert "deployment/crashloop-app" in text
+    assert "chaos" in text
+    assert "Exit Code: 1" in text
+    assert "correct spec" in text
+
+
+def test_stray_tool_call_markup_is_stripped(journal):
+    """Belt and braces: if a value ever arrives with parameter markup embedded,
+    the journal should not render it as if it were content."""
+    journal.record_finding(
+        title="x",
+        root_cause='real cause</root_cause>\n<parameter name="evidence">leaked',
+    )
+    text = journal.findings_path.read_text()
+    assert "</root_cause>" not in text
+    assert "<parameter" not in text
+    assert "real cause" in text
+
+
+def test_summary_is_still_accepted_as_a_title(journal):
+    journal.record_finding(summary="older caller shape")
+    assert "older caller shape" in journal.findings_path.read_text()
+
+
+def test_a_finding_with_no_title_is_still_recorded(journal):
+    journal.record_finding(root_cause="something went wrong")
+    assert "something went wrong" in journal.findings_path.read_text()

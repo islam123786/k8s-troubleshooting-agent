@@ -98,13 +98,26 @@ def build_tools(
     @tool(
         "record_finding",
         "Record a diagnosis in the session journal. Use this once you can explain "
-        "the causal chain from a configuration fact to the observed behaviour.",
-        {"summary": str, "root_cause": str, "fix": str},
+        "the causal chain from a configuration fact to the observed behaviour. "
+        "Every field is optional — record what you have rather than withholding a "
+        "partial finding.",
+        {
+            "title": str,
+            "resource": str,
+            "namespace": str,
+            "root_cause": str,
+            "evidence": str,
+            "fix": str,
+        },
     )
     async def record_finding(args: dict[str, Any]) -> dict[str, Any]:
         path = journal.record_finding(
+            title=str(args.get("title") or ""),
             summary=str(args.get("summary") or ""),
+            resource=str(args.get("resource") or ""),
+            namespace=str(args.get("namespace") or ""),
             root_cause=str(args.get("root_cause") or ""),
+            evidence=str(args.get("evidence") or ""),
             fix=str(args.get("fix") or ""),
             applied=False,
         )

@@ -598,3 +598,9 @@ def test_whole_document_output_formats_are_allowed(fmt):
 
 def test_an_unrecognised_output_format_is_denied():
     assert read("get", "pods", "-n", "chaos", "-o", "some-future-format") is Verdict.DENY
+
+
+def test_tool_search_is_permitted():
+    """Denied on the first live run: fail-closed did its job, but ToolSearch only
+    fetches tool schemas — it reads no data and changes nothing."""
+    assert verdict("ToolSearch", {"query": "select:Read"}) is Verdict.READ

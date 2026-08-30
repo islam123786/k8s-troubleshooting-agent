@@ -62,7 +62,10 @@ INTERNAL_APPLY_TOOL = "internal__apply"
 INTERNAL_DELETE_TOOL = "internal__delete"
 
 # Built-ins that cannot touch the cluster or the filesystem destructively.
-HARMLESS_TOOLS = frozenset({"Read", "Glob", "Grep", "Skill", "Task", "TodoWrite"})
+# ToolSearch only fetches tool *schemas* — it reads nothing and changes nothing.
+# It was denied on the first live run, which cost a turn and put a spurious DENY
+# in the audit log every session; fail-closed worked, but this one is genuinely safe.
+HARMLESS_TOOLS = frozenset({"Read", "Glob", "Grep", "Skill", "Task", "TodoWrite", "ToolSearch"})
 
 # Our own tools that only write to .agent-memory/, never to the cluster.
 LOCAL_ONLY_TOOLS = frozenset({"mcp__k8s__propose_fix", "mcp__k8s__record_finding"})

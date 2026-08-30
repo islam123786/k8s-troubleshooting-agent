@@ -23,10 +23,19 @@ DEFAULT_MEMORY_ROOT = Path(".agent-memory")
 
 _UNSAFE = re.compile(r"[^A-Za-z0-9._-]")
 
+# Tool-call parameter markup that has, in practice, leaked into argument values
+# when a model sends fields the schema does not declare. Stripped so the journal
+# never renders scaffolding as if it were the diagnosis.
+_MARKUP = re.compile(r"</?(parameter|root_cause|evidence|fix|title|summary)\b[^>]*>")
+
 
 def _slug(value: str, fallback: str = "item") -> str:
     cleaned = _UNSAFE.sub("-", value).strip("-.") or fallback
     return cleaned[:50].lower()
+
+
+def _clean(value: object) -> str:
+    return _MARKUP.sub("", str(value or "")).strip()
 
 
 def _now() -> str:
@@ -53,23 +62,45 @@ class Journal:
     def record_finding(
         self,
         *,
-        summary: str,
+        title: str = "",
+        summary: str = "",
         root_cause: str = "",
+        evidence: str = "",
         fix: str = "",
+        resource: str = "",
+        namespace: str = "",
         applied: bool = False,
         rollback_command: str = "",
     ) -> Path:
+        """Append one finding.
+
+        The field list mirrors the shape a diagnosis actually takes, which the
+        first live run established: a title, the resource it concerns, the root
+        cause, the evidence for it, and the fix. An earlier version declared only
+        summary/root_cause/fix, so a model sending `title` and `resource` had the
+        title silently dropped and the extra fields leak into the text.
+
+        Every field is optional: a partial finding is worth more than a rejected
+        one, and the model should never have to fight the schema mid-diagnosis.
+        """
         path = self.findings_path
         path.parent.mkdir(parents=True, exist_ok=True)
 
         if not path.exists():
             path.write_text(f"# Troubleshooting session {self.session}\n", encoding="utf-8")
 
-        block = [f"\n## {_now()} — {redact(summary)}\n"]
+        heading = _clean(title) or _clean(summary) or "finding"
+        where = " / ".join(x for x in (_clean(resource), _clean(namespace)) if x)
+
+        block = [f"\n## {_now()} — {redact(heading)}\n"]
+        if where:
+            block.append(f"**Resource:** {redact(where)}\n")
         if root_cause:
-            block.append(f"**Root cause:** {redact(root_cause)}\n")
+            block.append(f"**Root cause:** {redact(_clean(root_cause))}\n")
+        if evidence:
+            block.append(f"**Evidence:** {redact(_clean(evidence))}\n")
         if fix:
-            block.append(f"**Fix:** {redact(fix)}\n")
+            block.append(f"**Fix:** {redact(_clean(fix))}\n")
         block.append(f"**Applied:** {'yes' if applied else 'no'}\n")
         if rollback_command:
             block.append(f"**Undo:** `{rollback_command}`\n")
