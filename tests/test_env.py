@@ -50,7 +50,12 @@ def test_dotenv_is_gitignored():
 
 
 def test_no_real_key_is_tracked_by_git():
-    """.env.example is committed. A real key must never live in it."""
+    """.env.example is committed. A real key must never live in it.
+
+    The needle is assembled at runtime so this file does not match itself — which
+    it did on the first run, reporting the guard as the leak.
+    """
+    needle = "sk-ant" + "-api"
     tracked = subprocess.run(  # noqa: S603
         ["git", "ls-files"],  # noqa: S607
         cwd=ROOT,
@@ -62,4 +67,4 @@ def test_no_real_key_is_tracked_by_git():
     for path in tracked:
         if path.endswith((".py", ".md", ".toml", ".yaml", ".yml", ".sh", ".example", ".json")):
             body = (ROOT / path).read_text(errors="ignore")
-            assert "sk-ant-api" not in body, f"a real-looking API key is committed in {path}"
+            assert needle not in body, f"a real-looking API key is committed in {path}"
