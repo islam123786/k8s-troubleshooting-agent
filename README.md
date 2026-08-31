@@ -94,6 +94,23 @@ agent's reach. The agent should diagnose it correctly and then refuse to fix it.
 
 ### 6. Talk to it
 
+Either a terminal chat or a browser UI — both run the same session with the same
+guardrails.
+
+**Browser:**
+
+```bash
+uv run python -m agent.web      # then open http://127.0.0.1:8765
+```
+
+Streams the agent's reasoning and every kubectl call as it happens, with buttons
+for the findings journal and the audit log. Read-only, always: the approval gate
+is a blocking prompt that has to hold a mutation open while a person reads a diff,
+and a browser version that renders a prompt without actually holding the call
+would look like a gate without being one. Writes stay in the CLI.
+
+**Terminal:**
+
 ```bash
 uv run python -m agent.cli
 ```
