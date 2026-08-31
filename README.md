@@ -94,22 +94,67 @@ agent's reach. The agent should diagnose it correctly and then refuse to fix it.
 
 ### 6. Talk to it
 
-Either a terminal chat or a browser UI — both run the same session with the same
-guardrails.
+Either a browser UI or a terminal chat — both build the same session, with the same
+guardrails, from the same `build_options` / `build_server`.
 
-**Browser:**
+#### 6a. Browser UI
+
+**1. Start the server.** From the project root, with steps 1–4 done:
 
 ```bash
-uv run python -m agent.web      # then open http://127.0.0.1:8765
+uv run python -m agent.web
 ```
 
-Streams the agent's reasoning and every kubectl call as it happens, with buttons
-for the findings journal and the audit log. Read-only, always: the approval gate
-is a blocking prompt that has to hold a mutation open while a person reads a diff,
-and a browser version that renders a prompt without actually holding the call
-would look like a gate without being one. Writes stay in the CLI.
+It prints its address and the mode it is in, then stays in the foreground:
 
-**Terminal:**
+```
+Kubernetes troubleshooting agent — http://127.0.0.1:8765
+  cluster : kind-k8s-troubleshooting-agent
+  mode    : diagnose only (read-only)
+```
+
+**2. Open <http://127.0.0.1:8765>.** It binds to loopback only, so the page is
+reachable from this machine and nowhere else. The header shows the pinned cluster
+context and a `read-only` badge, both read live from `/api/health` — if the badge
+is missing, the page did not reach the server.
+
+**3. Ask a question** in the box at the bottom, e.g.:
+
+```
+what is wrong in the chaos namespace?
+```
+
+The answer streams in as it is produced: the agent's text, and a line for every
+tool call, so you watch each `kubectl get` / `describe` / `logs` as it runs rather
+than seeing only the conclusion. A footer reports the turn count and the cost when
+the run finishes.
+
+**4. Check its work** with the two header buttons:
+
+| Button | Shows |
+|---|---|
+| **Findings** | The session journal — root cause, evidence, proposed fix |
+| **Audit** | The last 100 tool calls with their policy verdicts, denials included |
+
+**5. Stop it** with `Ctrl-C` in the terminal running the server.
+
+Two things to know:
+
+- **Each question is its own session.** There is no conversation history between
+  asks, so put the context you need into the question itself. Findings and the audit
+  log accumulate across all of them in `.agent-memory/`.
+- **The UI is read-only, always** — there is no `--allow-writes` for it. The approval
+  gate is a blocking prompt that has to hold a mutation open while a person reads a
+  server diff and types a resource name; a browser version that renders a prompt
+  without actually holding the call open would look like a gate without being one.
+  Writes stay in the CLI until that round-trip is built properly. `ALLOW_WRITES` in
+  `agent/web.py` is a constant rather than a flag, and `tests/test_web.py` fails if
+  it is flipped.
+
+The page is one self-contained HTML file with no external assets, so it renders with
+no network beyond your cluster.
+
+#### 6b. Terminal
 
 ```bash
 uv run python -m agent.cli
@@ -121,6 +166,8 @@ uv run python -m agent.cli
 
 **Read-only by default.** The mutating tools are not registered at all, so the agent
 investigates and then writes the fix out for you to review rather than applying it.
+
+CLI flags:
 
 | Flag | Effect |
 |---|---|
@@ -181,3 +228,5 @@ adding a skill or a chaos scenario.
 | `context "kind-k8s-troubleshooting-agent" does not exist` | Run `./scripts/setup-cluster.sh`. |
 | Agent says it cannot apply a fix | Expected without `--allow-writes` — look in `.agent-memory/proposals/`. |
 | Agent refuses to fix `dns-broken` | Also expected. CoreDNS is in `kube-system`, outside the fence. |
+| `address already in use` on `agent.web` | Port 8765 is taken — stop the other server, or edit `PORT` in `agent/web.py`. |
+| Browser page loads but the `read-only` badge never appears | The page cannot reach `/api/health`; check the server is still running in its terminal. |
